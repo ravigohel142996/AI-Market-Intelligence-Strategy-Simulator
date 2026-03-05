@@ -7,8 +7,9 @@ returns a fully configured `plotly.graph_objects.Figure` ready for rendering.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -277,6 +278,289 @@ def competition_index_chart(result: SimulationResult) -> go.Figure:
         title=dict(text="Market Concentration (HHI)", x=0.5),
         xaxis_title="Round",
         yaxis_title="HHI Index",
+        **_LAYOUT_DEFAULTS,
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 8. Animated Market Share Race
+# ---------------------------------------------------------------------------
+
+def animated_market_share_race(result: SimulationResult) -> go.Figure:
+    """
+    Animated horizontal bar chart race showing market-share rankings
+    across all simulation rounds.  Includes Play / Pause controls and
+    a round slider.
+    """
+    shares_df = result.shares_df()
+    company_names = result.company_names
+    color_map = _color_map(company_names, result.company_colors)
+    rounds = [int(r) for r in shares_df["round"].tolist()]
+
+    def _frame_data(row: pd.Series) -> go.Bar:
+        sorted_names = sorted(company_names, key=lambda n: row.get(n, 0))
+        values = [row.get(n, 0) * 100 for n in sorted_names]
+        colors = [color_map.get(n, "#FFFFFF") for n in sorted_names]
+        return go.Bar(
+            x=values,
+            y=sorted_names,
+            orientation="h",
+            marker=dict(color=colors, line=dict(color="rgba(0,0,0,0)", width=0)),
+            text=[f"{v:.1f}%" for v in values],
+            textposition="outside",
+            cliponaxis=False,
+        )
+
+    frames = [
+        go.Frame(
+            data=[_frame_data(shares_df.iloc[i])],
+            name=str(rounds[i]),
+            layout=go.Layout(
+                title=dict(text=f"Market Share Race – Round {rounds[i]}", x=0.5)
+            ),
+        )
+        for i in range(len(rounds))
+    ]
+
+    initial_data = _frame_data(shares_df.iloc[0])
+
+    fig = go.Figure(data=[initial_data], frames=frames)
+
+    fig.update_layout(
+        title=dict(text=f"Market Share Race – Round {rounds[0]}", x=0.5),
+        xaxis=dict(range=[0, 110], title="Market Share (%)",
+                   gridcolor="rgba(255,255,255,0.07)"),
+        yaxis=dict(gridcolor="rgba(255,255,255,0.07)"),
+        updatemenus=[dict(
+            type="buttons",
+            showactive=False,
+            direction="left",
+            y=-0.18,
+            x=0.5,
+            xanchor="center",
+            pad=dict(r=10, t=10),
+            buttons=[
+                dict(
+                    label="▶ Play",
+                    method="animate",
+                    args=[
+                        None,
+                        {
+                            "frame": {"duration": 700, "redraw": True},
+                            "fromcurrent": True,
+                            "transition": {"duration": 400, "easing": "cubic-in-out"},
+                        },
+                    ],
+                ),
+                dict(
+                    label="⏸ Pause",
+                    method="animate",
+                    args=[
+                        [None],
+                        {
+                            "frame": {"duration": 0, "redraw": False},
+                            "mode": "immediate",
+                            "transition": {"duration": 0},
+                        },
+                    ],
+                ),
+            ],
+        )],
+        sliders=[dict(
+            active=0,
+            steps=[
+                dict(
+                    method="animate",
+                    args=[[str(r)], {
+                        "frame": {"duration": 300, "redraw": True},
+                        "mode": "immediate",
+                        "transition": {"duration": 200},
+                    }],
+                    label=str(r),
+                )
+                for r in rounds
+            ],
+            x=0,
+            y=-0.07,
+            len=1.0,
+            currentvalue=dict(
+                prefix="Round: ",
+                visible=True,
+                xanchor="center",
+                font=dict(size=13, color="#E0E0E0"),
+            ),
+            transition=dict(duration=200),
+            bgcolor="rgba(255,255,255,0.05)",
+            bordercolor="rgba(255,255,255,0.15)",
+            tickcolor="rgba(255,255,255,0.3)",
+        )],
+        margin=dict(l=40, r=20, t=50, b=100),
+        **{k: v for k, v in _LAYOUT_DEFAULTS.items() if k != "margin"},
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 9. Price–Quality Bubble Chart
+# ---------------------------------------------------------------------------
+
+def price_quality_bubble(result: SimulationResult) -> go.Figure:
+    """
+    Bubble chart: x = price, y = product quality,
+    bubble size ∝ market share, colour = company.
+    """
+    final = result.final_states()
+    color_map = _color_map(result.company_names, result.company_colors)
+
+    fig = go.Figure()
+    for cs in final:
+        fig.add_trace(go.Scatter(
+            x=[cs.price],
+            y=[cs.product_quality],
+            mode="markers+text",
+            name=cs.name,
+            text=[cs.name],
+            textposition="top center",
+            marker=dict(
+                size=max(cs.market_share * 220, 12),
+                color=color_map.get(cs.name, "#FFFFFF"),
+                opacity=0.8,
+                line=dict(color="rgba(255,255,255,0.5)", width=1),
+            ),
+            hovertemplate=(
+                f"<b>{cs.name}</b><br>"
+                "Price: $%{x:.2f}<br>"
+                "Quality: %{y:.3f}<br>"
+                f"Market Share: {cs.market_share * 100:.1f}%<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        title=dict(text="Price–Quality Positioning (bubble = market share)", x=0.5),
+        xaxis_title="Price ($)",
+        yaxis_title="Product Quality (0–1)",
+        showlegend=False,
+        **_LAYOUT_DEFAULTS,
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 10. Volatility Bar Chart
+# ---------------------------------------------------------------------------
+
+def volatility_chart(risk_profiles: list) -> go.Figure:
+    """
+    Horizontal bar chart showing share volatility per company.
+    *risk_profiles* is a list of ``CompanyRisk`` objects from RiskMetrics.
+    """
+    sorted_profiles = sorted(risk_profiles, key=lambda r: r.share_volatility)
+    names = [r.name for r in sorted_profiles]
+    volatilities = [r.share_volatility * 100 for r in sorted_profiles]
+    stabilities = [r.stability_score for r in sorted_profiles]
+
+    colors = [
+        f"rgba({int(255 * (1 - s))}, {int(200 * s)}, {int(80 * s)}, 0.85)"
+        for s in stabilities
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=volatilities,
+        y=names,
+        orientation="h",
+        marker=dict(color=colors, line=dict(color="rgba(0,0,0,0)", width=0)),
+        text=[f"{v:.2f}%" for v in volatilities],
+        textposition="outside",
+        hovertemplate="%{y}<br>Share Volatility: %{x:.2f}%<extra></extra>",
+    ))
+
+    fig.update_layout(
+        title=dict(text="Share Volatility by Company (lower = more stable)", x=0.5),
+        xaxis_title="Share Std Dev (%)",
+        **_LAYOUT_DEFAULTS,
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 11. Profit Correlation Heatmap
+# ---------------------------------------------------------------------------
+
+def correlation_heatmap(corr_matrix: pd.DataFrame) -> go.Figure:
+    """Heatmap showing Pearson correlations between company profits."""
+    names = list(corr_matrix.columns)
+    values = corr_matrix.values
+
+    fig = go.Figure(go.Heatmap(
+        z=values,
+        x=names,
+        y=names,
+        colorscale="RdBu",
+        zmid=0,
+        zmin=-1,
+        zmax=1,
+        text=[[f"{v:.2f}" for v in row] for row in values],
+        texttemplate="%{text}",
+        hovertemplate="%{x} vs %{y}: %{z:.3f}<extra></extra>",
+        colorbar=dict(
+            title="Correlation",
+            tickvals=[-1, -0.5, 0, 0.5, 1],
+            ticktext=["-1.0", "-0.5", "0", "0.5", "1.0"],
+        ),
+    ))
+
+    fig.update_layout(
+        title=dict(text="Profit Correlation Between Companies", x=0.5),
+        **_LAYOUT_DEFAULTS,
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 12. Marketing ROI Scatter
+# ---------------------------------------------------------------------------
+
+def marketing_roi_scatter(result: SimulationResult) -> go.Figure:
+    """
+    Scatter plot: x = marketing spend, y = average market share,
+    coloured by company.  Helps identify which marketing budgets yield
+    the best returns.
+    """
+    shares_df = result.shares_df()
+    final = result.final_states()
+    color_map = _color_map(result.company_names, result.company_colors)
+
+    fig = go.Figure()
+    for cs in final:
+        if cs.name not in shares_df.columns:
+            continue
+        avg_share = float(shares_df[cs.name].mean()) * 100
+        fig.add_trace(go.Scatter(
+            x=[cs.marketing_budget / 1_000],
+            y=[avg_share],
+            mode="markers+text",
+            name=cs.name,
+            text=[cs.name],
+            textposition="top center",
+            marker=dict(
+                size=16,
+                color=color_map.get(cs.name, "#FFFFFF"),
+                symbol="circle",
+                line=dict(color="rgba(255,255,255,0.4)", width=1),
+            ),
+            hovertemplate=(
+                f"<b>{cs.name}</b><br>"
+                "Marketing: $%{x:.1f}K<br>"
+                "Avg Share: %{y:.1f}%<extra></extra>"
+            ),
+        ))
+
+    fig.update_layout(
+        title=dict(text="Marketing Spend vs Average Market Share", x=0.5),
+        xaxis_title="Marketing Budget ($K)",
+        yaxis_title="Average Market Share (%)",
+        showlegend=False,
         **_LAYOUT_DEFAULTS,
     )
     return fig

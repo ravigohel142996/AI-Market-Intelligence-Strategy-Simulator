@@ -11,17 +11,25 @@ from __future__ import annotations
 import streamlit as st
 
 from analytics.market_metrics import MarketMetrics
+from analytics.risk_metrics import RiskMetrics
+from analytics.scenario_analyzer import ScenarioAnalyzer
 from core.simulation_engine import SimulationResult
 from ui.charts import (
+    render_animated_market_share_race,
     render_choice_feature_importance,
     render_competition_index,
+    render_correlation_heatmap,
     render_demand_feature_importance,
     render_demand_prediction,
     render_market_share_evolution,
     render_market_share_pie,
+    render_marketing_roi_scatter,
+    render_price_quality_bubble,
     render_profit_trend,
     render_strategy_radar,
+    render_volatility_chart,
 )
+from ui.export_panel import render_export_panel
 from utils.helpers import fmt_currency, fmt_number, fmt_pct
 
 
@@ -48,6 +56,27 @@ def _inject_css() -> None:
         .main { background-color: #0E1117; }
         h1, h2, h3 { font-family: 'Inter', sans-serif; }
 
+        /* ── Keyframe animations ── */
+        @keyframes fadeSlideUp {
+            0%   { opacity: 0; transform: translateY(18px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulse-glow {
+            0%   { box-shadow: 0 0 0 0 rgba(33, 150, 243, 0.0); }
+            50%  { box-shadow: 0 0 16px 4px rgba(33, 150, 243, 0.35); }
+            100% { box-shadow: 0 0 0 0 rgba(33, 150, 243, 0.0); }
+        }
+        @keyframes borderSlide {
+            0%   { border-left-color: #2196F3; }
+            33%  { border-left-color: #9C27B0; }
+            66%  { border-left-color: #4CAF50; }
+            100% { border-left-color: #2196F3; }
+        }
+        @keyframes shimmer {
+            0%   { background-position: -200% center; }
+            100% { background-position: 200% center; }
+        }
+
         /* ── KPI Cards ── */
         .kpi-card {
             background: linear-gradient(135deg, #1E1E2E 0%, #252540 100%);
@@ -55,6 +84,12 @@ def _inject_css() -> None:
             border-radius: 12px;
             padding: 20px 24px;
             text-align: center;
+            animation: fadeSlideUp 0.6s ease-out both, pulse-glow 3s ease-in-out 0.8s infinite;
+            transition: transform 0.2s ease, border-color 0.3s ease;
+        }
+        .kpi-card:hover {
+            transform: translateY(-3px);
+            border-color: #2196F3;
         }
         .kpi-value {
             font-size: 2rem;
@@ -82,10 +117,33 @@ def _inject_css() -> None:
             border-left: 4px solid #2196F3;
             padding-left: 12px;
             margin: 24px 0 12px 0;
+            animation: fadeSlideUp 0.5s ease-out both, borderSlide 6s linear infinite;
         }
+
+        /* ── Risk badge ── */
+        .risk-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .risk-low    { background: rgba(76, 175, 80, 0.2);  color: #4CAF50; }
+        .risk-medium { background: rgba(255, 152, 0, 0.2);  color: #FF9800; }
+        .risk-high   { background: rgba(244, 67, 54, 0.2);  color: #F44336; }
 
         /* ── Data table ── */
         .dataframe { border: none !important; }
+
+        /* ── Animated hero banner ── */
+        .hero-banner {
+            background: linear-gradient(270deg, #0D47A1, #1565C0, #283593, #0D47A1);
+            background-size: 600% 600%;
+            animation: shimmer 8s ease infinite;
+            border-radius: 12px;
+            padding: 4px;
+            margin-bottom: 8px;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -191,6 +249,65 @@ def render_charts(result: SimulationResult) -> None:
         render_strategy_radar(result)
     with col6:
         render_competition_index(result)
+
+
+def render_animated_section(result: SimulationResult) -> None:
+    """Animated bar chart race with Play/Pause and round slider."""
+    st.markdown(
+        '<p class="section-header">🎬 Animated Market Replay</p>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Press **▶ Play** to watch the market-share race unfold round by round, "
+        "or drag the slider to jump to any round."
+    )
+    render_animated_market_share_race(result)
+
+
+def render_risk_section(result: SimulationResult) -> None:
+    """Risk analysis: volatility, stability, and profit correlation."""
+    st.markdown('<p class="section-header">⚠️ Risk Analysis</p>', unsafe_allow_html=True)
+
+    risk = RiskMetrics(result)
+    risk_df = risk.risk_table()
+
+    st.dataframe(risk_df, use_container_width=True, hide_index=True)
+
+    col_v, col_c = st.columns(2)
+    with col_v:
+        render_volatility_chart(result)
+    with col_c:
+        render_correlation_heatmap(result)
+
+
+def render_competitive_intelligence(result: SimulationResult) -> None:
+    """Competitive intelligence: price–quality positioning and marketing ROI."""
+    st.markdown(
+        '<p class="section-header">🔍 Competitive Intelligence</p>',
+        unsafe_allow_html=True,
+    )
+
+    scenario = ScenarioAnalyzer(result)
+    summary_df = scenario.competitive_summary_table()
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        render_price_quality_bubble(result)
+    with col_b:
+        render_marketing_roi_scatter(result)
+
+    # Demand trend banner
+    trend = scenario.demand_trend_summary()
+    direction = "📈" if trend["trend_pct"] >= 0 else "📉"
+    st.info(
+        f"{direction} **Demand Trend:** first-half avg "
+        f"**{fmt_number(trend['first_half_avg'])}** units → second-half avg "
+        f"**{fmt_number(trend['second_half_avg'])}** units "
+        f"(**{trend['trend_pct']:+.1f}%** change).  "
+        f"Peak: **{fmt_number(trend['peak_demand'])}** | "
+        f"Trough: **{fmt_number(trend['trough_demand'])}**"
+    )
 
 
 def render_model_insights(result: SimulationResult) -> None:

@@ -13,14 +13,18 @@ from core.simulation_engine import SimulationEngine
 from ui.controls import render_controls
 from ui.dashboard import (
     configure_page,
+    render_animated_section,
     render_charts,
     render_company_table,
+    render_competitive_intelligence,
     render_empty_state,
     render_header,
     render_kpi_cards,
     render_model_insights,
+    render_risk_section,
     render_simulation_info,
 )
+from ui.export_panel import render_export_panel
 
 
 def main() -> None:
@@ -52,7 +56,11 @@ def main() -> None:
         render_kpi_cards(result)
         render_company_table(result)
         render_charts(result)
+        render_animated_section(result)
+        render_risk_section(result)
+        render_competitive_intelligence(result)
         render_model_insights(result)
+        render_export_panel(result)
         render_simulation_info(result)
     else:
         render_empty_state()
